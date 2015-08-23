@@ -1,0 +1,94 @@
+---
+title: "Practical Machine Learning - Project Writeup"
+author: "Royston Monteiro"
+date: "August 22, 2015"
+output: html_document
+---
+
+#Project Writeup for the course Practical Machine Learning
+
+```{r, echo=TRUE}
+data <- read.csv("pml-training.csv", na.strings = c("NA", ""))
+
+library(caret)
+library(randomForest)
+#install.packages("doParallel")
+library(doParallel)
+registerDoParallel(cores = 1)
+
+```
+
+Split the data into a training and testing set.
+```{r, echo=FALSE}
+inTrain <- createDataPartition(y = data$classe, list = FALSE, p = .3)
+training <- data[inTrain,]
+testing <- data[-inTrain,]
+
+```
+
+Taking a cursory look at the summary of the data, notice that a lot of columns have a high proportion of NA's. Such variables will likely not contribute to the model in predicting the outcome. It is best to remove such variables.
+```{r, echo=FALSE}
+naCutOff = dim(training)[1] * 0.8
+naIndexes <- which(as.numeric((colSums(is.na(training)))) > naCutOff)
+training <- training[-naIndexes]
+testing <- testing[-naIndexes]
+
+```
+
+
+Have the model training get the full benefits of all cores on the machine it is being trained on. Keep an eye out on the memory usage when increasing the number of cores that R can use.
+
+```{r, echo=FALSE}
+library(doParallel)
+registerDoParallel(cores = 2)
+
+```
+
+It is a good idea to identify and remove variables that have very low variance and will likely not contribute to the outcome. reference : http://topepo.github.io/caret/preprocess.html
+```{r, echo=FALSE}
+####1. take out variables that have near zero variance. the outcome is clearly independent of them
+nsv <- nearZeroVar(x=training)
+training <- training[-nsv]
+testing <- testing[-nsv]
+```
+
+Identify variables that have a very high correlation with other variables.  
+```{r, echo=FALSE}
+numericCols <- training[sapply(training, is.numeric)]
+corrMatrix <- cor(numericCols, use = "na.or.complete")
+highCorrMatrix <- findCorrelation(x = corrMatrix, cutoff = .9)
+highCorrNames <- names(numericCols[,highCorrMatrix]); 
+highCorrNames <- names(training) %in% highCorrNames
+
+training <- training[!highCorrNames]
+testing <- testing[!highCorrNames]
+```
+
+Remove bookkeeping columns: index, name, timestamps
+```{r, echo=FALSE}
+training <- training[,7:dim(training)[2]]
+testing <- testing[,7:dim(testing)[2]]
+```
+
+Examine variable importance to a training model by using the varImp() function on the fitted model
+```{r, echo=FALSE}
+rfModel <- train(classe ~ ., data=training, method="rf", trControl = trainControl(method="cv", number=5), prox=FALSE, allowParallel=TRUE)
+imp <- varImp(rfModel)
+plot(imp)
+
+```
+
+
+
+Finally, train the model with different proportions of testing to training data: I have tested with using 5% - 60% of data for training, with 95% - 40% for testing and found that the perfomace degrades considerably beyond about 40$ without much improvement in accuracy.
+```{r}
+print(rfModel)
+```
+From the summary of the trained model, we notice that the Accuracy for the mtry selected is 96.6%. Error rate of about 3.4%. Given that the caret package has used 5 fold cross validation and resampled the results, we would expect an out of sample error rate that is around that benchmark.
+
+```{r}
+#Cross validating on the test data
+prediction <- predict(rfModel, testing)
+summary(prediction == testing$classe)
+
+```
